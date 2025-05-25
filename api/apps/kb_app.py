@@ -58,6 +58,7 @@ def create():
         status=StatusEnum.VALID.value)
     try:
         req["id"] = get_uuid()
+        req["name"] = dataset_name
         req["tenant_id"] = current_user.id
         req["created_by"] = current_user.id
         e, t = TenantService.get_by_id(current_user.id)
@@ -152,6 +153,7 @@ def detail():
         if not kb:
             return get_data_error_result(
                 message="Can't find this knowledgebase!")
+        kb["size"] = DocumentService.get_total_size_by_kb_id(kb_id=kb["id"],keywords="", run_status=[], types=[])
         return get_json_result(data=kb)
     except Exception as e:
         return server_error_response(e)

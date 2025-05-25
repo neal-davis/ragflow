@@ -368,7 +368,11 @@ async def build_chunks(task, progress_callback):
 
         docs_to_tag = []
         for d in docs:
-            if settings.retrievaler.tag_content(tenant_id, kb_ids, d, all_tags, topn_tags=topn_tags, S=S):
+            task_canceled = TaskService.do_cancel(task["id"])
+            if task_canceled:
+                progress_callback(-1, msg="Task has been canceled.")
+                return
+            if settings.retrievaler.tag_content(tenant_id, kb_ids, d, all_tags, topn_tags=topn_tags, S=S) and len(d[TAG_FLD]) > 0:
                 examples.append({"content": d["content_with_weight"], TAG_FLD: d[TAG_FLD]})
             else:
                 docs_to_tag.append(d)
@@ -537,9 +541,9 @@ async def do_handle_task(task):
     elif task.get("task_type", "") == "graphrag":
         global task_limiter
         task_limiter = trio.CapacityLimiter(2)
-        graphrag_conf = task_parser_config.get("graphrag", {})
-        if not graphrag_conf.get("use_graphrag", False):
+        if not task_parser_config.get("graphrag", {}).get("use_graphrag", False):
             return
+        graphrag_conf = task["kb_parser_config"].get("graphrag", {})
         start_ts = timer()
         chat_model = LLMBundle(task_tenant_id, LLMType.CHAT, llm_name=task_llm_id, lang=task_language)
         with_resolution = graphrag_conf.get("resolution", False)
@@ -577,8 +581,22 @@ async def do_handle_task(task):
     start_ts = timer()
     doc_store_result = ""
     es_bulk_size = 4
+
+    async def delete_image(kb_id, chunk_id):
+        try:
+            async with minio_limiter:
+                STORAGE_IMPL.delete(kb_id, chunk_id)
+        except Exception:
+            logging.exception(
+                "Deleting image of chunk {}/{}/{} got exception".format(task["location"], task["name"], chunk_id))
+            raise
+
     for b in range(0, len(chunks), es_bulk_size):
         doc_store_result = await trio.to_thread.run_sync(lambda: settings.docStoreConn.insert(chunks[b:b + es_bulk_size], search.index_name(task_tenant_id), task_dataset_id))
+        task_canceled = TaskService.do_cancel(task_id)
+        if task_canceled:
+            progress_callback(-1, msg="Task has been canceled.")
+            return
         if b % 128 == 0:
             progress_callback(prog=0.8 + 0.1 * (b + 1) / len(chunks), msg="")
         if doc_store_result:
@@ -592,7 +610,11 @@ async def do_handle_task(task):
         except DoesNotExist:
             logging.warning(f"do_handle_task update_chunk_ids failed since task {task['id']} is unknown.")
             doc_store_result = await trio.to_thread.run_sync(lambda: settings.docStoreConn.delete({"id": chunk_ids}, search.index_name(task_tenant_id), task_dataset_id))
+            async with trio.open_nursery() as nursery:
+                for chunk_id in chunk_ids:
+                    nursery.start_soon(delete_image, task_dataset_id, chunk_id)
             return
+        
     logging.info("Indexing doc({}), page({}-{}), chunks({}), elapsed: {:.2f}".format(task_document_name, task_from_page,
                                                                                      task_to_page, len(chunks),
                                                                                      timer() - start_ts))
@@ -713,7 +735,10 @@ def recover_pending_tasks():
             redis_lock.release()
             stop_event.wait(60)
         
-
+async def task_manager():
+    global task_limiter
+    async with task_limiter:
+        await handle_task()
 
 
 async def main():
@@ -742,8 +767,8 @@ async def main():
     async with trio.open_nursery() as nursery:
         nursery.start_soon(report_status)
         while not stop_event.is_set():
-            async with task_limiter:
-                nursery.start_soon(handle_task)
+            nursery.start_soon(task_manager)
+            await trio.sleep(0.1)
     logging.error("BUG!!! You should not reach here!!!")
 
 if __name__ == "__main__":
