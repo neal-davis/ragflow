@@ -1,8 +1,6 @@
-import { LlmModelType } from '@/constants/knowledge';
+import { ModelTreeSelect } from '@/components/model-tree-select';
 import { useTranslate } from '@/hooks/common-hooks';
-import { useSelectLlmOptionsByModelType } from '@/hooks/llm-hooks';
-import { Select as AntSelect, Form, message, Slider } from 'antd';
-import { useCallback } from 'react';
+import { prefixName } from '@/utils/form';
 import { useFormContext } from 'react-hook-form';
 import { z } from 'zod';
 import { SliderInputFormField } from './slider-input-form-field';
@@ -13,56 +11,6 @@ import {
   FormLabel,
   FormMessage,
 } from './ui/form';
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-  SelectValue,
-} from './ui/select';
-
-type FieldType = {
-  rerank_id?: string;
-  top_k?: number;
-};
-
-export const RerankItem = () => {
-  const { t } = useTranslate('knowledgeDetails');
-  const allOptions = useSelectLlmOptionsByModelType();
-  const [messageApi, contextHolder] = message.useMessage();
-
-  const handleChange = useCallback(
-    (val: string) => {
-      if (val) {
-        messageApi.open({
-          type: 'warning',
-          content: t('reRankModelWaring'),
-        });
-      }
-    },
-    [messageApi, t],
-  );
-
-  return (
-    <>
-      {contextHolder}
-      <Form.Item
-        label={t('rerankModel')}
-        name={'rerank_id'}
-        tooltip={t('rerankTip')}
-      >
-        <AntSelect
-          options={allOptions[LlmModelType.Rerank]}
-          allowClear
-          placeholder={t('rerankPlaceholder')}
-          onChange={handleChange}
-        />
-      </Form.Item>
-    </>
-  );
-};
 
 export const topKSchema = {
   top_k: z.number().optional(),
@@ -72,77 +20,31 @@ export const initialTopKValue = {
   top_k: 1024,
 };
 
-const Rerank = () => {
-  const { t } = useTranslate('knowledgeDetails');
+const DefaultRerankId = 'rerank_id';
+const DefaultTopK = 'top_k';
 
-  return (
-    <>
-      <RerankItem></RerankItem>
-      <Form.Item noStyle dependencies={['rerank_id']}>
-        {({ getFieldValue }) => {
-          const rerankId = getFieldValue('rerank_id');
-          return (
-            rerankId && (
-              <Form.Item<FieldType>
-                label={t('topK')}
-                name={'top_k'}
-                initialValue={1024}
-                tooltip={t('topKTip')}
-              >
-                <Slider max={2048} min={1} />
-              </Form.Item>
-            )
-          );
-        }}
-      </Form.Item>
-    </>
-  );
-};
+interface RerankFormFieldProps {
+  name?: string;
+}
 
-export default Rerank;
-
-const RerankId = 'rerank_id';
-
-function RerankFormField() {
+function RerankFormField({ name = DefaultRerankId }: RerankFormFieldProps) {
   const form = useFormContext();
   const { t } = useTranslate('knowledgeDetails');
-  const allOptions = useSelectLlmOptionsByModelType();
-  const options = allOptions[LlmModelType.Rerank];
 
   return (
     <FormField
       control={form.control}
-      name={RerankId}
+      name={name}
       render={({ field }) => (
         <FormItem>
           <FormLabel tooltip={t('rerankTip')}>{t('rerankModel')}</FormLabel>
           <FormControl>
-            <Select onValueChange={field.onChange} {...field}>
-              <SelectTrigger
-                value={field.value}
-                onReset={() => {
-                  form.resetField(RerankId);
-                }}
-              >
-                <SelectValue placeholder={t('rerankPlaceholder')} />
-              </SelectTrigger>
-              <SelectContent>
-                {options.map((x) => (
-                  <SelectGroup key={x.label}>
-                    <SelectLabel>{x.label}</SelectLabel>
-                    {x.options.map((y) => (
-                      <SelectItem
-                        value={y.value}
-                        key={y.value}
-                        disabled={y.disabled}
-                      >
-                        {y.label}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                ))}
-              </SelectContent>
-            </Select>
+            <ModelTreeSelect
+              modelTypes={['rerank']}
+              allowClear
+              placeholder={t('rerankPlaceholder')}
+              {...field}
+            />
           </FormControl>
           <FormMessage />
         </FormItem>
@@ -151,17 +53,29 @@ function RerankFormField() {
   );
 }
 
-export function RerankFormFields() {
+export const rerankFormSchema = {
+  [DefaultRerankId]: z.string().optional(),
+  top_k: z.coerce.number().optional(),
+};
+
+interface RerankFormFieldsProps {
+  prefix?: string;
+}
+
+export function RerankFormFields({ prefix = '' }: RerankFormFieldsProps) {
   const { watch } = useFormContext();
   const { t } = useTranslate('knowledgeDetails');
-  const rerankId = watch(RerankId);
+  const rerankIdName = prefixName(prefix, DefaultRerankId);
+  const topKName = prefixName(prefix, DefaultTopK);
+
+  const rerankId = watch(rerankIdName);
 
   return (
     <>
-      <RerankFormField></RerankFormField>
+      <RerankFormField name={rerankIdName}></RerankFormField>
       {rerankId && (
         <SliderInputFormField
-          name={'top_k'}
+          name={topKName}
           label={t('topK')}
           max={2048}
           min={1}

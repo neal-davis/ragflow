@@ -1,239 +1,29 @@
-import { ReactComponent as MoreModelIcon } from '@/assets/svg/more-model.svg';
-import { LlmIcon } from '@/components/svg-icon';
-import { useTheme } from '@/components/theme-provider';
+import Spotlight from '@/components/spotlight';
 import { LLMFactory } from '@/constants/llm';
-import { useSetModalState, useTranslate } from '@/hooks/common-hooks';
-import { LlmItem, useSelectLlmList } from '@/hooks/llm-hooks';
-import { getRealModelName } from '@/utils/llm-util';
-import { CloseCircleOutlined, SettingOutlined } from '@ant-design/icons';
 import {
-  Button,
-  Card,
-  Col,
-  Collapse,
-  CollapseProps,
-  Divider,
-  Flex,
-  List,
-  Row,
-  Space,
-  Spin,
-  Tag,
-  Tooltip,
-  Typography,
-} from 'antd';
-import { CircleHelp } from 'lucide-react';
-import { useCallback, useMemo } from 'react';
-import SettingTitle from '../components/setting-title';
+  useAddInstanceModel,
+  useAddProviderInstance,
+  useFetchAvailableProviders,
+  useVerifyProviderConnection,
+} from '@/hooks/use-llm-request';
+import { IInstanceModel, IProviderInstance } from '@/interfaces/database/llm';
+import type {
+  IAddProviderInstanceRequestBody,
+  IModelInfo,
+} from '@/interfaces/request/llm';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { isLocalLlmFactory } from '../utils';
-import TencentCloudModal from './Tencent-modal';
-import ApiKeyModal from './api-key-modal';
-import AzureOpenAIModal from './azure-openai-modal';
-import BedrockModal from './bedrock-modal';
-import FishAudioModal from './fish-audio-modal';
-import GoogleModal from './google-modal';
-import {
-  useHandleDeleteFactory,
-  useHandleDeleteLlm,
-  useSubmitApiKey,
-  useSubmitAzure,
-  useSubmitBedrock,
-  useSubmitFishAudio,
-  useSubmitGoogle,
-  useSubmitHunyuan,
-  useSubmitOllama,
-  useSubmitSpark,
-  useSubmitSystemModelSetting,
-  useSubmitTencentCloud,
-  useSubmitVolcEngine,
-  useSubmityiyan,
-} from './hooks';
-import HunyuanModal from './hunyuan-modal';
-import styles from './index.less';
-import OllamaModal from './ollama-modal';
-import SparkModal from './spark-modal';
-import SystemModelSettingModal from './system-model-setting-modal';
-import VolcEngineModal from './volcengine-modal';
-import YiyanModal from './yiyan-modal';
+import SystemSetting from './components/system-setting';
+import { AvailableModels } from './components/un-add-model';
+import { UsedModel } from './components/used-model';
+import { useSubmitBedrock, useSubmitSoMark, useVerifySettings } from './hooks';
+import BedrockModal from './modal/bedrock-modal';
+import ProviderModal, { IViewModeOkPayload } from './modal/provider-modal';
+import SoMarkModal from './modal/somark-modal';
+import { splitProviderPayload } from './payload-utils';
 
-const { Text } = Typography;
-interface IModelCardProps {
-  item: LlmItem;
-  clickApiKey: (llmFactory: string) => void;
-}
-
-const ModelCard = ({ item, clickApiKey }: IModelCardProps) => {
-  const { visible, switchVisible } = useSetModalState();
-  const { t } = useTranslate('setting');
-  const { theme } = useTheme();
-  const { handleDeleteLlm } = useHandleDeleteLlm(item.name);
-  const { handleDeleteFactory } = useHandleDeleteFactory(item.name);
-
-  const handleApiKeyClick = () => {
-    clickApiKey(item.name);
-  };
-
-  const handleShowMoreClick = () => {
-    switchVisible();
-  };
-
-  return (
-    <List.Item>
-      <Card
-        className={theme === 'dark' ? styles.addedCardDark : styles.addedCard}
-      >
-        <Row align={'middle'}>
-          <Col span={12}>
-            <Flex gap={'middle'} align="center">
-              <LlmIcon name={item.name} />
-              <Flex vertical gap={'small'}>
-                <b>{item.name}</b>
-                <Text>{item.tags}</Text>
-              </Flex>
-            </Flex>
-          </Col>
-          <Col span={12} className={styles.factoryOperationWrapper}>
-            <Space size={'middle'}>
-              <Button onClick={handleApiKeyClick}>
-                <Flex align="center" gap={4}>
-                  {isLocalLlmFactory(item.name) ||
-                  item.name === LLMFactory.VolcEngine ||
-                  item.name === LLMFactory.TencentHunYuan ||
-                  item.name === LLMFactory.XunFeiSpark ||
-                  item.name === LLMFactory.BaiduYiYan ||
-                  item.name === LLMFactory.FishAudio ||
-                  item.name === LLMFactory.TencentCloud ||
-                  item.name === LLMFactory.GoogleCloud ||
-                  item.name === LLMFactory.AzureOpenAI
-                    ? t('addTheModel')
-                    : 'API-Key'}
-                  <SettingOutlined />
-                </Flex>
-              </Button>
-              <Button onClick={handleShowMoreClick}>
-                <Flex align="center" gap={4}>
-                  {t('showMoreModels')}
-                  <MoreModelIcon />
-                </Flex>
-              </Button>
-              <Button type={'text'} onClick={handleDeleteFactory}>
-                <Flex align="center">
-                  <CloseCircleOutlined style={{ color: '#D92D20' }} />
-                </Flex>
-              </Button>
-            </Space>
-          </Col>
-        </Row>
-        {visible && (
-          <List
-            size="small"
-            dataSource={item.llm}
-            className={styles.llmList}
-            renderItem={(item) => (
-              <List.Item>
-                <Space>
-                  {getRealModelName(item.name)}
-                  <Tag color="#b8b8b8">{item.type}</Tag>
-                  <Tooltip title={t('delete', { keyPrefix: 'common' })}>
-                    <Button type={'text'} onClick={handleDeleteLlm(item.name)}>
-                      <CloseCircleOutlined style={{ color: '#D92D20' }} />
-                    </Button>
-                  </Tooltip>
-                </Space>
-              </List.Item>
-            )}
-          />
-        )}
-      </Card>
-    </List.Item>
-  );
-};
-
-const UserSettingModel = () => {
-  const { factoryList, myLlmList: llmList, loading } = useSelectLlmList();
-  const { theme } = useTheme();
-  const {
-    saveApiKeyLoading,
-    initialApiKey,
-    llmFactory,
-    onApiKeySavingOk,
-    apiKeyVisible,
-    hideApiKeyModal,
-    showApiKeyModal,
-  } = useSubmitApiKey();
-  const {
-    saveSystemModelSettingLoading,
-    onSystemSettingSavingOk,
-    systemSettingVisible,
-    hideSystemSettingModal,
-    showSystemSettingModal,
-  } = useSubmitSystemModelSetting();
-  const { t } = useTranslate('setting');
-  const {
-    llmAddingVisible,
-    hideLlmAddingModal,
-    showLlmAddingModal,
-    onLlmAddingOk,
-    llmAddingLoading,
-    selectedLlmFactory,
-  } = useSubmitOllama();
-
-  const {
-    volcAddingVisible,
-    hideVolcAddingModal,
-    showVolcAddingModal,
-    onVolcAddingOk,
-    volcAddingLoading,
-  } = useSubmitVolcEngine();
-
-  const {
-    HunyuanAddingVisible,
-    hideHunyuanAddingModal,
-    showHunyuanAddingModal,
-    onHunyuanAddingOk,
-    HunyuanAddingLoading,
-  } = useSubmitHunyuan();
-
-  const {
-    GoogleAddingVisible,
-    hideGoogleAddingModal,
-    showGoogleAddingModal,
-    onGoogleAddingOk,
-    GoogleAddingLoading,
-  } = useSubmitGoogle();
-
-  const {
-    TencentCloudAddingVisible,
-    hideTencentCloudAddingModal,
-    showTencentCloudAddingModal,
-    onTencentCloudAddingOk,
-    TencentCloudAddingLoading,
-  } = useSubmitTencentCloud();
-
-  const {
-    SparkAddingVisible,
-    hideSparkAddingModal,
-    showSparkAddingModal,
-    onSparkAddingOk,
-    SparkAddingLoading,
-  } = useSubmitSpark();
-
-  const {
-    yiyanAddingVisible,
-    hideyiyanAddingModal,
-    showyiyanAddingModal,
-    onyiyanAddingOk,
-    yiyanAddingLoading,
-  } = useSubmityiyan();
-
-  const {
-    FishAudioAddingVisible,
-    hideFishAudioAddingModal,
-    showFishAudioAddingModal,
-    onFishAudioAddingOk,
-    FishAudioAddingLoading,
-  } = useSubmitFishAudio();
-
+const ModelProviders = () => {
+  // Retained special modals
   const {
     bedrockAddingLoading,
     onBedrockAddingOk,
@@ -242,231 +32,378 @@ const UserSettingModel = () => {
     showBedrockAddingModal,
   } = useSubmitBedrock();
 
+  // Unified ProviderModal state
+  const [providerVisible, setProviderVisible] = useState(false);
+  const [currentLlmFactory, setCurrentLlmFactory] = useState<string>('');
+  const [providerLoading, setProviderLoading] = useState(false);
+
+  // viewMode (edit-models) state: when true, ProviderModal opens in
+  // read-only mode for everything except the model-related fields.
+  // `viewModeInitialValues` carries the existing instance + model data.
+  const [viewMode, setViewMode] = useState(false);
+  const [viewModeInitialValues, setViewModeInitialValues] = useState<
+    Record<string, any> | undefined
+  >(undefined);
+
+  // ProviderModal submission logic: calls addProviderInstance + addInstanceModel
+  const { addProviderInstance } = useAddProviderInstance();
+  const { addInstanceModel } = useAddInstanceModel();
+  const { verifyProviderConnection } = useVerifyProviderConnection();
+  const { data: availableProviders } = useFetchAvailableProviders();
+
+  // Convert IAvailableProvider.url to baseUrlOptions
+  // IAvailableProvider.url looks like { default?: string; cn?: string; intl?: string; ... }
+  // Mapped to [{ value: 'https://...', regionKey: 'default', label: <span>https://...<span>default</span></span> }, ...]
+  // `regionKey` carries the original key so the modal can map the currently
+  // selected URL back to its key for the `region` submit field.
+  const buildBaseUrlOptions = useCallback(
+    (urlObj?: Record<string, string | undefined>) => {
+      if (!urlObj) return undefined;
+      const options = Object.keys(urlObj)
+        .filter((k) => !!urlObj[k])
+        .map((k) => {
+          const v = urlObj[k] as string;
+          // if (k === 'default') {
+          //   return { value: v, label: v };
+          // }
+          return {
+            value: v,
+            regionKey: k,
+            label: (
+              <div className="flex justify-between items-center gap-2">
+                <span className="truncate">{v}</span>
+                <span className="text-xs text-text-secondary bg-bg-card px-2 py-0.5 rounded-sm shrink-0">
+                  {k}
+                </span>
+              </div>
+            ),
+          };
+        });
+      return options.length > 0 ? options : undefined;
+    },
+    [],
+  );
+
+  // baseUrlOptions for the current factory (looked up from availableProviders)
+  const currentProvider = useMemo(
+    () =>
+      currentLlmFactory
+        ? availableProviders.find((p) => p.name === currentLlmFactory)
+        : undefined,
+    [availableProviders, currentLlmFactory],
+  );
+  const currentBaseUrlOptions = useMemo(
+    () => buildBaseUrlOptions(currentProvider?.url),
+    [buildBaseUrlOptions, currentProvider],
+  );
+
+  const handleProviderOk = useCallback(
+    async (payload: IAddProviderInstanceRequestBody, isVerify = false) => {
+      if (!isVerify) setProviderLoading(true);
+      try {
+        if (isVerify) {
+          // Verify mode: call verify API
+          const ret = await addProviderInstance({ ...payload, verify: true });
+          return ret;
+        }
+        // Normal submission
+        const { instancePayload, modelPayload } = splitProviderPayload(payload);
+        const hasModelPayload =
+          !!modelPayload.model_name && !!modelPayload.model_type;
+        const instanceRet = await addProviderInstance({
+          ...instancePayload,
+          llm_factory: payload.llm_factory,
+          instance_name: payload.instance_name,
+        } as IAddProviderInstanceRequestBody);
+        if (instanceRet.code !== 0) {
+          return instanceRet;
+        }
+        // When model information has been submitted nested in the instance via model_info
+        // (e.g., VolcEngine / LocalLLM), addInstanceModel is no longer called separately;
+        // close the modal directly.
+        if (!hasModelPayload) {
+          setProviderVisible(false);
+          return instanceRet;
+        }
+        const modelRet = await addInstanceModel({
+          provider_name: payload.llm_factory,
+          instance_name: payload.instance_name,
+          ...modelPayload,
+        });
+        if (modelRet.code === 0) {
+          setProviderVisible(false);
+        }
+        return modelRet;
+      } finally {
+        if (!isVerify) setProviderLoading(false);
+      }
+    },
+    [addProviderInstance, addInstanceModel],
+  );
+
+  useEffect(() => {
+    if (!providerVisible) {
+      setProviderLoading(false);
+    }
+  }, [providerVisible]);
+
+  const handleProviderVerify = useCallback(
+    async (params: any) => {
+      // ProviderModal's handleVerify flattens verifyArgs onto params
+      // verifyArgs comes from config.verifyTransform, fields are apiKey/baseUrl/region/modelInfo
+      const apiKey = params.apiKey ?? params.api_key ?? params._apiKey ?? '';
+      const baseUrl = params.baseUrl ?? params.base_url ?? params._baseUrl;
+      const region = params.region ?? params._region;
+      const modelInfo =
+        params.modelInfo ?? params.model_info ?? params._modelInfo;
+      const ret = await verifyProviderConnection({
+        provider_name: params.llm_factory ?? currentLlmFactory,
+        api_key: apiKey,
+        base_url: baseUrl,
+        region: region,
+        model_info: modelInfo,
+      });
+      if (ret.code === 0) {
+        return { isValid: true, logs: ret.message };
+      }
+      return { isValid: false, logs: ret.message };
+    },
+    [verifyProviderConnection, currentLlmFactory],
+  );
+
   const {
-    AzureAddingVisible,
-    hideAzureAddingModal,
-    showAzureAddingModal,
-    onAzureAddingOk,
-    AzureAddingLoading,
-  } = useSubmitAzure();
+    somarkVisible,
+    hideSoMarkModal,
+    showSoMarkModal,
+    onSoMarkOk,
+    somarkLoading,
+  } = useSubmitSoMark();
 
   const ModalMap = useMemo(
     () => ({
       [LLMFactory.Bedrock]: showBedrockAddingModal,
-      [LLMFactory.VolcEngine]: showVolcAddingModal,
-      [LLMFactory.TencentHunYuan]: showHunyuanAddingModal,
-      [LLMFactory.XunFeiSpark]: showSparkAddingModal,
-      [LLMFactory.BaiduYiYan]: showyiyanAddingModal,
-      [LLMFactory.FishAudio]: showFishAudioAddingModal,
-      [LLMFactory.TencentCloud]: showTencentCloudAddingModal,
-      [LLMFactory.GoogleCloud]: showGoogleAddingModal,
-      [LLMFactory.AzureOpenAI]: showAzureAddingModal,
+      [LLMFactory.VolcEngine]: () => {
+        setCurrentLlmFactory(LLMFactory.VolcEngine);
+        setProviderVisible(true);
+      },
+      [LLMFactory.XunFeiSpark]: () => {
+        setCurrentLlmFactory(LLMFactory.XunFeiSpark);
+        setProviderVisible(true);
+      },
+      [LLMFactory.BaiduYiYan]: () => {
+        setCurrentLlmFactory(LLMFactory.BaiduYiYan);
+        setProviderVisible(true);
+      },
+      [LLMFactory.FishAudio]: () => {
+        setCurrentLlmFactory(LLMFactory.FishAudio);
+        setProviderVisible(true);
+      },
+      [LLMFactory.TencentCloud]: () => {
+        setCurrentLlmFactory(LLMFactory.TencentCloud);
+        setProviderVisible(true);
+      },
+      [LLMFactory.GoogleCloud]: () => {
+        setCurrentLlmFactory(LLMFactory.GoogleCloud);
+        setProviderVisible(true);
+      },
+      [LLMFactory.AzureOpenAI]: () => {
+        setCurrentLlmFactory(LLMFactory.AzureOpenAI);
+        setProviderVisible(true);
+      },
+      [LLMFactory.MinerU]: () => {
+        setCurrentLlmFactory(LLMFactory.MinerU);
+        setProviderVisible(true);
+      },
+      [LLMFactory.PaddleOCR]: () => {
+        setCurrentLlmFactory(LLMFactory.PaddleOCR);
+        setProviderVisible(true);
+      },
+      [LLMFactory.OpenDataLoader]: () => {
+        setCurrentLlmFactory(LLMFactory.OpenDataLoader);
+        setProviderVisible(true);
+      },
+      [LLMFactory.SoMark]: showSoMarkModal,
     }),
-    [
-      showBedrockAddingModal,
-      showVolcAddingModal,
-      showHunyuanAddingModal,
-      showTencentCloudAddingModal,
-      showSparkAddingModal,
-      showyiyanAddingModal,
-      showFishAudioAddingModal,
-      showGoogleAddingModal,
-      showAzureAddingModal,
-    ],
+    [showBedrockAddingModal, showSoMarkModal],
   );
 
   const handleAddModel = useCallback(
     (llmFactory: string) => {
       if (isLocalLlmFactory(llmFactory)) {
-        showLlmAddingModal(llmFactory);
+        setCurrentLlmFactory(llmFactory);
+        setProviderVisible(true);
       } else if (llmFactory in ModalMap) {
         ModalMap[llmFactory as keyof typeof ModalMap]();
       } else {
-        showApiKeyModal({ llm_factory: llmFactory });
+        setCurrentLlmFactory(llmFactory);
+        setProviderVisible(true);
       }
     },
-    [showApiKeyModal, showLlmAddingModal, ModalMap],
+    [ModalMap],
   );
 
-  const items: CollapseProps['items'] = [
-    {
-      key: '1',
-      label: t('addedModels'),
-      children: (
-        <List
-          grid={{ gutter: 16, column: 1 }}
-          dataSource={llmList}
-          renderItem={(item) => (
-            <ModelCard item={item} clickApiKey={handleAddModel}></ModelCard>
-          )}
-        />
-      ),
+  // Open the ProviderModal in viewMode (read-only) for an existing
+  // instance so the user can edit its model list. The instance's
+  // `api_key`, `baseUrl` and `model_info` are passed as initial values;
+  // the list picker uses `model_info` to pre-check the already-added
+  // models.
+  const handleEditInstance = useCallback(
+    (
+      providerName: string,
+      instance: IProviderInstance,
+      models: IInstanceModel[],
+    ) => {
+      setCurrentLlmFactory(providerName);
+      const modelInfos: IModelInfo[] = models.map((m) => ({
+        model_name: m.name,
+        model_type: m.model_type,
+        max_tokens: m.max_tokens ?? 0,
+      }));
+      // For non-LIST_MODEL_PROVIDERS, the modal renders model_name /
+      // model_type / max_tokens / is_tools as form fields, so seed
+      // them from the first existing model to match what the user sees
+      // in the instance list.
+      const firstModel = models[0];
+      setViewModeInitialValues({
+        instance_name: instance.instance_name,
+        api_key: instance.api_key,
+        // baseUrl is only present when the showProviderInstance endpoint
+        // returned it; pass it as both `base_url` and `api_base` so it
+        // fills the form field regardless of which name the provider
+        // config uses.
+        ...(instance.base_url
+          ? { base_url: instance.base_url, api_base: instance.base_url }
+          : {}),
+        ...(firstModel
+          ? {
+              model_name: firstModel.name,
+              model_type: firstModel.model_type,
+              max_tokens: firstModel.max_tokens,
+            }
+          : {}),
+        model_info: modelInfos,
+      });
+      setViewMode(true);
+      setProviderVisible(true);
     },
-    {
-      key: '2',
-      label: (
-        <div className="flex items-center gap-2">
-          {t('modelsToBeAdded')}
-          <Tooltip title={t('modelsToBeAddedTooltip')}>
-            <CircleHelp className="size-4" />
-          </Tooltip>
-        </div>
-      ),
-      children: (
-        <List
-          grid={{
-            gutter: {
-              xs: 8,
-              sm: 10,
-              md: 12,
-              lg: 16,
-              xl: 20,
-              xxl: 24,
-            },
-            xs: 1,
-            sm: 1,
-            md: 2,
-            lg: 3,
-            xl: 4,
-            xxl: 8,
-          }}
-          dataSource={factoryList}
-          renderItem={(item) => (
-            <List.Item>
-              <Card
-                className={
-                  theme === 'dark'
-                    ? styles.toBeAddedCardDark
-                    : styles.toBeAddedCard
-                }
-              >
-                <Flex vertical gap={'middle'}>
-                  <LlmIcon name={item.name} imgClass="h-12 w-auto" />
-                  <Flex vertical gap={'middle'}>
-                    <b>
-                      <Text ellipsis={{ tooltip: item.name }}>{item.name}</Text>
-                    </b>
-                    <Text className={styles.modelTags}>{item.tags}</Text>
-                  </Flex>
-                </Flex>
-                <Divider className={styles.modelDivider}></Divider>
-                <Button
-                  type="link"
-                  onClick={() => handleAddModel(item.name)}
-                  className={styles.addButton}
-                >
-                  {t('addTheModel')}
-                </Button>
-              </Card>
-            </List.Item>
-          )}
-        />
-      ),
+    [],
+  );
+
+  // viewMode save handler: receives the list of selected models (or
+  // the editable model fields for non-LIST_MODEL_PROVIDERS) from the
+  // modal and adds them via `addInstanceModel`. Does NOT call
+  // `addProviderInstance` because the instance itself is unchanged.
+  const handleViewModeOk = useCallback(
+    async (payload: IViewModeOkPayload) => {
+      setProviderLoading(true);
+      try {
+        if (payload.modelInfos.length > 0) {
+          // LIST_MODEL_PROVIDERS: full sync — call addInstanceModel for
+          // every selected model. The backend is idempotent so re-adding
+          // an already-present model is a no-op.
+          for (const model of payload.modelInfos) {
+            const modelType = Array.isArray(model.model_type)
+              ? model.model_type
+              : model.model_type
+                ? [model.model_type as string]
+                : [];
+            const ret = await addInstanceModel({
+              provider_name: payload.llmFactory,
+              instance_name: payload.instanceName,
+              model_name: model.model_name,
+              model_type: modelType,
+              max_tokens: model.max_tokens ?? 0,
+              ...(model.extra ? { extra: model.extra } : {}),
+            });
+            if (ret.code !== 0) {
+              return ret;
+            }
+          }
+        } else if (payload.formValues) {
+          // Non-LIST_MODEL_PROVIDERS: add/update the single model
+          // described by the form values.
+          const fv = payload.formValues;
+          const modelType = Array.isArray(fv.model_type)
+            ? fv.model_type
+            : fv.model_type
+              ? [fv.model_type as string]
+              : [];
+          const ret = await addInstanceModel({
+            provider_name: payload.llmFactory,
+            instance_name: payload.instanceName,
+            model_name: fv.model_name,
+            model_type: modelType,
+            max_tokens: fv.max_tokens ?? 0,
+            ...(fv.is_tools !== undefined
+              ? { extra: { is_tools: !!fv.is_tools } }
+              : {}),
+          });
+          if (ret.code !== 0) {
+            return ret;
+          }
+        }
+        setProviderVisible(false);
+      } finally {
+        setProviderLoading(false);
+      }
     },
-  ];
+    [addInstanceModel],
+  );
+
+  // Closing the modal also clears the viewMode flag so the next open
+  // starts in the default (add) mode.
+  const hideProviderModal = useCallback(() => {
+    setProviderVisible(false);
+    setViewMode(false);
+  }, []);
+
+  const { onApiKeyVerifying: onSoMarkVerifying } = useVerifySettings({
+    onVerify: onSoMarkOk,
+  });
 
   return (
-    <section id="xx" className="w-full space-y-6">
-      <Spin spinning={loading}>
-        <section className={styles.modelContainer}>
-          <SettingTitle
-            title={t('model')}
-            description={t('modelDescription')}
-            showRightButton
-            clickButton={showSystemSettingModal}
-          ></SettingTitle>
-          <Divider></Divider>
-          <Collapse defaultActiveKey={['1', '2']} ghost items={items} />
-        </section>
-      </Spin>
-      <ApiKeyModal
-        visible={apiKeyVisible}
-        hideModal={hideApiKeyModal}
-        loading={saveApiKeyLoading}
-        initialValue={initialApiKey}
-        onOk={onApiKeySavingOk}
-        llmFactory={llmFactory}
-      ></ApiKeyModal>
-      {systemSettingVisible && (
-        <SystemModelSettingModal
-          visible={systemSettingVisible}
-          onOk={onSystemSettingSavingOk}
-          hideModal={hideSystemSettingModal}
-          loading={saveSystemModelSettingLoading}
-        ></SystemModelSettingModal>
-      )}
-      <OllamaModal
-        visible={llmAddingVisible}
-        hideModal={hideLlmAddingModal}
-        onOk={onLlmAddingOk}
-        loading={llmAddingLoading}
-        llmFactory={selectedLlmFactory}
-      ></OllamaModal>
-      <VolcEngineModal
-        visible={volcAddingVisible}
-        hideModal={hideVolcAddingModal}
-        onOk={onVolcAddingOk}
-        loading={volcAddingLoading}
-        llmFactory={LLMFactory.VolcEngine}
-      ></VolcEngineModal>
-      <HunyuanModal
-        visible={HunyuanAddingVisible}
-        hideModal={hideHunyuanAddingModal}
-        onOk={onHunyuanAddingOk}
-        loading={HunyuanAddingLoading}
-        llmFactory={LLMFactory.TencentHunYuan}
-      ></HunyuanModal>
-      <GoogleModal
-        visible={GoogleAddingVisible}
-        hideModal={hideGoogleAddingModal}
-        onOk={onGoogleAddingOk}
-        loading={GoogleAddingLoading}
-        llmFactory={LLMFactory.GoogleCloud}
-      ></GoogleModal>
-      <TencentCloudModal
-        visible={TencentCloudAddingVisible}
-        hideModal={hideTencentCloudAddingModal}
-        onOk={onTencentCloudAddingOk}
-        loading={TencentCloudAddingLoading}
-        llmFactory={LLMFactory.TencentCloud}
-      ></TencentCloudModal>
-      <SparkModal
-        visible={SparkAddingVisible}
-        hideModal={hideSparkAddingModal}
-        onOk={onSparkAddingOk}
-        loading={SparkAddingLoading}
-        llmFactory={LLMFactory.XunFeiSpark}
-      ></SparkModal>
-      <YiyanModal
-        visible={yiyanAddingVisible}
-        hideModal={hideyiyanAddingModal}
-        onOk={onyiyanAddingOk}
-        loading={yiyanAddingLoading}
-        llmFactory={LLMFactory.BaiduYiYan}
-      ></YiyanModal>
-      <FishAudioModal
-        visible={FishAudioAddingVisible}
-        hideModal={hideFishAudioAddingModal}
-        onOk={onFishAudioAddingOk}
-        loading={FishAudioAddingLoading}
-        llmFactory={LLMFactory.FishAudio}
-      ></FishAudioModal>
+    <div className="flex w-full border-[0.5px] border-border-button rounded-lg relative ">
+      <Spotlight />
+      <section className="flex flex-col gap-4 w-3/5 px-5 border-r-[0.5px] border-border-button overflow-auto scrollbar-auto">
+        <SystemSetting />
+        <UsedModel
+          handleAddModel={handleAddModel}
+          onEditInstance={handleEditInstance}
+        />
+      </section>
+      <section className="flex flex-col w-2/5 overflow-auto scrollbar-auto">
+        <AvailableModels handleAddModel={handleAddModel} />
+      </section>
+      {/* Unified ProviderModal (replaces 9 independent modals) */}
+      <ProviderModal
+        visible={providerVisible}
+        hideModal={hideProviderModal}
+        llmFactory={currentLlmFactory}
+        loading={providerLoading}
+        viewMode={viewMode}
+        initialValues={viewModeInitialValues}
+        baseUrlOptions={currentBaseUrlOptions as any}
+        onOk={handleProviderOk}
+        onVerify={handleProviderVerify}
+        onViewModeOk={handleViewModeOk}
+      />
       <BedrockModal
         visible={bedrockAddingVisible}
         hideModal={hideBedrockAddingModal}
         onOk={onBedrockAddingOk}
         loading={bedrockAddingLoading}
         llmFactory={LLMFactory.Bedrock}
+        onVerify={(payload) => onBedrockAddingOk(payload, true)}
       ></BedrockModal>
-      <AzureOpenAIModal
-        visible={AzureAddingVisible}
-        hideModal={hideAzureAddingModal}
-        onOk={onAzureAddingOk}
-        loading={AzureAddingLoading}
-        llmFactory={LLMFactory.AzureOpenAI}
-      ></AzureOpenAIModal>
-    </section>
+      <SoMarkModal
+        visible={somarkVisible}
+        hideModal={hideSoMarkModal}
+        onOk={onSoMarkOk}
+        loading={somarkLoading}
+        onVerify={onSoMarkVerifying}
+      ></SoMarkModal>
+    </div>
   );
 };
 
-export default UserSettingModel;
+export default ModelProviders;

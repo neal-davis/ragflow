@@ -1,25 +1,48 @@
 import { useHandleFilterSubmit } from '@/components/list-filter-bar/use-handle-filter-submit';
-import { IDocumentInfo } from '@/interfaces/database/document';
+
+import message from '@/components/ui/message';
+import { RunningStatus } from '@/constants/knowledge';
+import { ResponseType } from '@/interfaces/database/base';
+import { IReferenceChunk } from '@/interfaces/database/chat';
+import { IChunk } from '@/interfaces/database/dataset';
+import {
+  IDocumentInfo,
+  IDocumentInfoFilter,
+} from '@/interfaces/database/document';
 import {
   IChangeParserConfigRequestBody,
   IDocumentMetaRequestBody,
 } from '@/interfaces/request/document';
 import i18n from '@/locales/config';
-import kbService, { listDocument } from '@/services/knowledge-service';
+import { EMPTY_METADATA_FIELD } from '@/pages/dataset/dataset/use-select-filters';
+import kbService, {
+  changeDocumentParser,
+  changeDocumentsStatus,
+  createDocument,
+  deleteDocument,
+  documentFilter,
+  listDocument,
+  renameDocument,
+  uploadDocument,
+} from '@/services/knowledge-service';
+import { restAPIv1 } from '@/utils/api';
+import { buildChunkHighlights } from '@/utils/document-util';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDebounce } from 'ahooks';
-import { message } from 'antd';
 import { get } from 'lodash';
-import { useCallback } from 'react';
-import { useParams } from 'umi';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { IHighlight } from 'react-pdf-highlighter';
+import { useParams } from 'react-router';
 import {
   useGetPaginationWithRouter,
   useHandleSearchChange,
 } from './logic-hooks';
+import { extractParserConfigExt } from './parser-config-utils';
 import {
   useGetKnowledgeSearchParams,
   useSetPaginationParams,
 } from './route-hook';
+import { KnowledgeApiAction } from './use-knowledge-request';
 
 export const enum DocumentApiAction {
   UploadDocument = 'uploadDocument',
@@ -30,11 +53,13 @@ export const enum DocumentApiAction {
   SaveDocumentName = 'saveDocumentName',
   SetDocumentParser = 'setDocumentParser',
   SetDocumentMeta = 'setDocumentMeta',
-  FetchAllDocumentList = 'fetchAllDocumentList',
+  FetchDocumentFilter = 'fetchDocumentFilter',
   CreateDocument = 'createDocument',
+  FetchDocumentThumbnails = 'fetchDocumentThumbnails',
+  ParseDocument = 'parseDocument',
 }
 
-export const useUploadNextDocument = () => {
+export const useUploadDocument = () => {
   const queryClient = useQueryClient();
   const { id } = useParams();
 
@@ -42,25 +67,34 @@ export const useUploadNextDocument = () => {
     data,
     isPending: loading,
     mutateAsync,
-  } = useMutation({
+  } = useMutation<
+    ResponseType<IDocumentInfo[]>,
+    Error,
+    { fileList: File[]; parserConfig?: Record<string, any> }
+  >({
     mutationKey: [DocumentApiAction.UploadDocument],
-    mutationFn: async (fileList: File[]) => {
+    mutationFn: async ({ fileList, parserConfig }) => {
+      if (!id) {
+        return { code: 500, message: 'Dataset ID is required' };
+      }
       const formData = new FormData();
-      formData.append('kb_id', id!);
       fileList.forEach((file: any) => {
         formData.append('file', file);
       });
+      if (parserConfig) {
+        formData.append('parser_config', JSON.stringify(parserConfig));
+      }
 
       try {
-        const ret = await kbService.document_upload(formData);
-        const code = get(ret, 'data.code');
+        const ret = await uploadDocument(id, formData);
+        const code = get(ret, 'code');
 
         if (code === 0 || code === 500) {
           queryClient.invalidateQueries({
             queryKey: [DocumentApiAction.FetchDocumentList],
           });
         }
-        return ret?.data;
+        return ret;
       } catch (error) {
         console.warn(error);
         return {
@@ -71,16 +105,29 @@ export const useUploadNextDocument = () => {
     },
   });
 
-  return { uploadDocument: mutateAsync, loading, data };
+  const upload = useCallback(
+    (fileList: File[], parserConfig?: Record<string, any>) =>
+      mutateAsync({ fileList, parserConfig }),
+    [mutateAsync],
+  );
+
+  return { uploadDocument: upload, loading, data };
 };
 
-export const useFetchDocumentList = () => {
+export const useFetchDocumentList = (loop = true) => {
   const { knowledgeId } = useGetKnowledgeSearchParams();
   const { searchString, handleInputChange } = useHandleSearchChange();
   const { pagination, setPagination } = useGetPaginationWithRouter();
   const { id } = useParams();
+  const queryClient = useQueryClient();
   const debouncedSearchString = useDebounce(searchString, { wait: 500 });
-  const { filterValue, handleFilterSubmit } = useHandleFilterSubmit();
+  const { filterValue, handleFilterSubmit, checkValue } =
+    useHandleFilterSubmit();
+  const [docs, setDocs] = useState<IDocumentInfo[]>([]);
+
+  const isLoop = useMemo(() => {
+    return loop && docs.some((doc) => doc.run === RunningStatus.RUNNING);
+  }, [docs, loop]);
 
   const { data, isFetching: loading } = useQuery<{
     docs: IDocumentInfo[];
@@ -93,22 +140,41 @@ export const useFetchDocumentList = () => {
       filterValue,
     ],
     initialData: { docs: [], total: 0 },
-    // refetchInterval: 15000,
+    refetchInterval: isLoop ? 5000 : false,
     enabled: !!knowledgeId || !!id,
     queryFn: async () => {
+      let run = [] as any;
+      let returnEmptyMetadata = false;
+      if (filterValue.run && Array.isArray(filterValue.run)) {
+        run = [...(filterValue.run as string[])];
+        const returnEmptyMetadataIndex = run.findIndex(
+          (r: string) => r === EMPTY_METADATA_FIELD,
+        );
+        if (returnEmptyMetadataIndex > -1) {
+          returnEmptyMetadata = true;
+          run.splice(returnEmptyMetadataIndex, 1);
+        }
+      } else {
+        run = filterValue.run;
+      }
       const ret = await listDocument(
         {
-          kb_id: knowledgeId || id,
-          keywords: debouncedSearchString,
+          id: knowledgeId || id,
+          ext: { keywords: debouncedSearchString },
           page_size: pagination.pageSize,
           page: pagination.current,
         },
         {
-          types: filterValue.type,
-          run_status: filterValue.run,
+          suffix: filterValue.type as string[],
+          run_status: run as string[],
+          return_empty_metadata: returnEmptyMetadata,
+          metadata: filterValue.metadata as Record<string, string[]>,
         },
       );
       if (ret.data.code === 0) {
+        queryClient.invalidateQueries({
+          queryKey: [DocumentApiAction.FetchDocumentFilter],
+        });
         return ret.data.data;
       }
 
@@ -118,7 +184,9 @@ export const useFetchDocumentList = () => {
       };
     },
   });
-
+  useMemo(() => {
+    setDocs(data.docs);
+  }, [data.docs]);
   const onInputChange: React.ChangeEventHandler<HTMLInputElement> = useCallback(
     (e) => {
       setPagination({ page: 1 });
@@ -126,6 +194,12 @@ export const useFetchDocumentList = () => {
     },
     [handleInputChange, setPagination],
   );
+
+  useEffect(() => {
+    queryClient.invalidateQueries({
+      queryKey: [KnowledgeApiAction.FetchKnowledgeDetail],
+    });
+  }, [data.docs, queryClient]);
 
   return {
     loading,
@@ -136,37 +210,53 @@ export const useFetchDocumentList = () => {
     setPagination,
     filterValue,
     handleFilterSubmit,
+    checkValue,
   };
 };
 
-export function useFetchAllDocumentList() {
+// get document filter
+export const useGetDocumentFilter = (): {
+  filter: IDocumentInfoFilter;
+  onOpenChange: (open: boolean) => void;
+} => {
+  const { knowledgeId } = useGetKnowledgeSearchParams();
+  const { searchString } = useHandleSearchChange();
   const { id } = useParams();
-  const { data, isFetching: loading } = useQuery<{
-    docs: IDocumentInfo[];
-    total: number;
-  }>({
-    queryKey: [DocumentApiAction.FetchAllDocumentList],
-    initialData: { docs: [], total: 0 },
-    refetchInterval: 15000,
-    enabled: !!id,
+  const debouncedSearchString = useDebounce(searchString, { wait: 500 });
+  const [open, setOpen] = useState<number>(0);
+  const datasetId = knowledgeId || id;
+  const { data } = useQuery({
+    queryKey: [
+      DocumentApiAction.FetchDocumentFilter,
+      debouncedSearchString,
+      knowledgeId,
+    ],
     queryFn: async () => {
-      const ret = await listDocument({
-        kb_id: id,
-      });
-      if (ret.data.code === 0) {
-        return ret.data.data;
+      if (!datasetId) {
+        return;
       }
-
-      return {
-        docs: [],
-        total: 0,
-      };
+      const { data } = await documentFilter(datasetId);
+      if (data.code === 0) {
+        return data.data;
+      }
     },
   });
-
-  return { data, loading };
-}
-
+  const handleOpenChange = (e: boolean) => {
+    if (e) {
+      const currentOpen = open + 1;
+      setOpen(currentOpen);
+    }
+  };
+  return {
+    filter: data?.filter || {
+      run_status: {},
+      suffix: {},
+      metadata: {},
+    },
+    onOpenChange: handleOpenChange,
+  };
+};
+// update document status
 export const useSetDocumentStatus = () => {
   const queryClient = useQueryClient();
 
@@ -174,19 +264,24 @@ export const useSetDocumentStatus = () => {
     data,
     isPending: loading,
     mutateAsync,
-  } = useMutation({
-    mutationKey: [DocumentApiAction.UpdateDocumentStatus],
-    mutationFn: async ({
-      status,
-      documentId,
-    }: {
+  } = useMutation<
+    any,
+    Error,
+    {
       status: boolean;
-      documentId: string;
-    }) => {
-      const { data } = await kbService.document_change_status({
-        doc_id: documentId,
+      documentId: string | string[];
+      datasetId: string;
+    }
+  >({
+    mutationKey: [DocumentApiAction.UpdateDocumentStatus],
+    mutationFn: async ({ status, documentId, datasetId }) => {
+      const ids = Array.isArray(documentId) ? documentId : [documentId];
+      const { data } = await changeDocumentsStatus({
+        kb_id: datasetId,
+        doc_ids: ids,
         status: Number(status),
       });
+
       if (data.code === 0) {
         message.success(i18n.t('message.modified'));
         queryClient.invalidateQueries({
@@ -200,6 +295,7 @@ export const useSetDocumentStatus = () => {
   return { setDocumentStatus: mutateAsync, data, loading };
 };
 
+// This hook is used to run a document by its IDs
 export const useRunDocument = () => {
   const queryClient = useQueryClient();
 
@@ -212,20 +308,19 @@ export const useRunDocument = () => {
     mutationFn: async ({
       documentIds,
       run,
-      shouldDelete,
+      option,
     }: {
       documentIds: string[];
       run: number;
-      shouldDelete: boolean;
+      option?: { delete: boolean; apply_kb: boolean };
     }) => {
       queryClient.invalidateQueries({
         queryKey: [DocumentApiAction.FetchDocumentList],
       });
-
-      const ret = await kbService.document_run({
+      const ret = await kbService.documentIngest({
         doc_ids: documentIds,
         run,
-        delete: shouldDelete,
+        ...(option || {}),
       });
       const code = get(ret, 'data.code');
       if (code === 0) {
@@ -244,6 +339,7 @@ export const useRunDocument = () => {
 
 export const useRemoveDocument = () => {
   const queryClient = useQueryClient();
+  const { id: datasetId } = useParams();
   const {
     data,
     isPending: loading,
@@ -251,7 +347,8 @@ export const useRemoveDocument = () => {
   } = useMutation({
     mutationKey: [DocumentApiAction.RemoveDocument],
     mutationFn: async (documentIds: string | string[]) => {
-      const { data } = await kbService.document_rm({ doc_id: documentIds });
+      const ids = Array.isArray(documentIds) ? documentIds : [documentIds];
+      const { data } = await deleteDocument(datasetId!, ids);
       if (data.code === 0) {
         message.success(i18n.t('message.deleted'));
         queryClient.invalidateQueries({
@@ -277,12 +374,13 @@ export const useSaveDocumentName = () => {
     mutationFn: async ({
       name,
       documentId,
+      kbId,
     }: {
       name: string;
       documentId: string;
+      kbId: string;
     }) => {
-      const { data } = await kbService.document_rename({
-        doc_id: documentId,
+      const { data } = await renameDocument(kbId, documentId, {
         name: name,
       });
       if (data.code === 0) {
@@ -309,18 +407,35 @@ export const useSetDocumentParser = () => {
     mutationKey: [DocumentApiAction.SetDocumentParser],
     mutationFn: async ({
       parserId,
+      pipelineId,
       documentId,
+      datasetId,
       parserConfig,
     }: {
       parserId: string;
+      pipelineId: string;
       documentId: string;
-      parserConfig: IChangeParserConfigRequestBody;
+      datasetId: string;
+      parserConfig?: IChangeParserConfigRequestBody;
     }) => {
-      const { data } = await kbService.document_change_parser({
-        parser_id: parserId,
-        doc_id: documentId,
-        parser_config: parserConfig,
-      });
+      // Build update payload
+      const updateData: Record<string, unknown> = {};
+      if (parserId) {
+        updateData.chunk_method = parserId;
+      }
+      if (pipelineId) {
+        updateData.pipeline_id = pipelineId;
+      }
+
+      if (parserConfig) {
+        updateData.parser_config = extractParserConfigExt(parserConfig);
+      }
+
+      const { data } = await changeDocumentParser(
+        datasetId,
+        documentId,
+        updateData,
+      );
       if (data.code === 0) {
         queryClient.invalidateQueries({
           queryKey: [DocumentApiAction.FetchDocumentList],
@@ -360,7 +475,7 @@ export const useSetDocumentMeta = () => {
         }
         return data?.code;
       } catch (error) {
-        message.error('error');
+        message.error('error:' + error);
       }
     },
   });
@@ -380,10 +495,10 @@ export const useCreateDocument = () => {
   } = useMutation({
     mutationKey: [DocumentApiAction.CreateDocument],
     mutationFn: async (name: string) => {
-      const { data } = await kbService.document_create({
-        name,
-        kb_id: id,
-      });
+      if (!id) {
+        return 500;
+      }
+      const data = await createDocument(id, name);
       if (data.code === 0) {
         if (page === 1) {
           queryClient.invalidateQueries({
@@ -400,4 +515,54 @@ export const useCreateDocument = () => {
   });
 
   return { createDocument: mutateAsync, loading, data };
+};
+
+export const useGetDocumentUrl = (documentId?: string) => {
+  const getDocumentUrl = useCallback(
+    (id?: string) => {
+      return `${restAPIv1}/documents/${id || documentId}/preview`;
+    },
+    [documentId],
+  );
+
+  return getDocumentUrl;
+};
+
+export const useGetChunkHighlights = (
+  selectedChunk: IChunk | IReferenceChunk,
+) => {
+  const [size, setSize] = useState({ width: 849, height: 1200 });
+
+  const highlights: IHighlight[] = useMemo(() => {
+    return buildChunkHighlights(selectedChunk, size);
+  }, [selectedChunk, size]);
+
+  const setWidthAndHeight = (width: number, height: number) => {
+    setSize((pre) => {
+      if (pre.height !== height || pre.width !== width) {
+        return { height, width };
+      }
+      return pre;
+    });
+  };
+
+  return { highlights, setWidthAndHeight };
+};
+
+export const useFetchDocumentThumbnailsByIds = () => {
+  const [ids, setDocumentIds] = useState<string[]>([]);
+  const { data } = useQuery<Record<string, string>>({
+    queryKey: [DocumentApiAction.FetchDocumentThumbnails, ids],
+    enabled: ids.length > 0,
+    initialData: {},
+    queryFn: async () => {
+      const { data } = await kbService.documentThumbnails({ doc_ids: ids });
+      if (data.code === 0) {
+        return data.data;
+      }
+      return {};
+    },
+  });
+
+  return { data, setDocumentIds };
 };

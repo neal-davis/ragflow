@@ -1,98 +1,22 @@
-import { CodeTemplateStrMap, ProgrammingLanguage } from '@/constants/agent';
-import { settledModelVariableMap } from '@/constants/knowledge';
-import { omit } from 'lodash';
-import { useCallback, useEffect } from 'react';
-import { UseFormReturn } from 'react-hook-form';
-import { Operator } from '../constant';
+import { useEffect } from 'react';
+import { UseFormReturn, useWatch } from 'react-hook-form';
 import useGraphStore from '../store';
-import { buildCategorizeObjectFromList } from '../utils';
 
-export const useHandleFormValuesChange = (
-  operatorName: Operator,
+export function useWatchFormChange(
   id?: string,
-  form?: UseFormReturn,
-) => {
-  const updateNodeForm = useGraphStore((state) => state.updateNodeForm);
-
-  const handleValuesChange = useCallback(
-    (changedValues: any, values: any) => {
-      let nextValues: any = values;
-      // Fixed the issue that the related form value does not change after selecting the freedom field of the model
-      if (
-        Object.keys(changedValues).length === 1 &&
-        'parameter' in changedValues &&
-        changedValues['parameter'] in settledModelVariableMap
-      ) {
-        nextValues = {
-          ...values,
-          ...settledModelVariableMap[
-            changedValues['parameter'] as keyof typeof settledModelVariableMap
-          ],
-        };
-      }
-      if (id) {
-        updateNodeForm(id, nextValues);
-      }
-    },
-    [updateNodeForm, id],
-  );
+  form?: UseFormReturn<any>,
+  enableReplacement = false,
+) {
+  let values = useWatch({ control: form?.control });
+  const { updateNodeForm, replaceNodeForm } = useGraphStore((state) => state);
 
   useEffect(() => {
-    const subscription = form?.watch((value, { name, type, values }) => {
-      console.log('🚀 ~ subscription ~ value:', value);
-      if (id && name) {
-        console.log(
-          '🚀 ~ useEffect ~ value:',
-          name,
-          type,
-          values,
-          operatorName,
-        );
-        let nextValues: any = value;
+    // Manually triggered form updates are synchronized to the canvas
+    if (id) {
+      values = form?.getValues() || {};
+      const nextValues: any = values;
 
-        // Fixed the issue that the related form value does not change after selecting the freedom field of the model
-        if (
-          name === 'parameter' &&
-          value['parameter'] in settledModelVariableMap
-        ) {
-          nextValues = {
-            ...value,
-            ...settledModelVariableMap[
-              value['parameter'] as keyof typeof settledModelVariableMap
-            ],
-          };
-        }
-
-        const categoryDescriptionRegex = /items\.\d+\.name/g;
-        if (
-          operatorName === Operator.Categorize &&
-          categoryDescriptionRegex.test(name)
-        ) {
-          nextValues = {
-            ...omit(value, 'items'),
-            category_description: buildCategorizeObjectFromList(value.items),
-          };
-        }
-
-        if (
-          operatorName === Operator.Code &&
-          type === 'change' &&
-          name === 'lang'
-        ) {
-          nextValues = {
-            ...value,
-            script: CodeTemplateStrMap[value.lang as ProgrammingLanguage],
-          };
-        }
-        // Manually triggered form updates are synchronized to the canvas
-        if (type) {
-          // run(id, nextValues);
-          updateNodeForm(id, nextValues);
-        }
-      }
-    });
-    return () => subscription?.unsubscribe();
-  }, [form, form?.watch, id, operatorName, updateNodeForm]);
-
-  return { handleValuesChange };
-};
+      (enableReplacement ? replaceNodeForm : updateNodeForm)(id, nextValues);
+    }
+  }, [form?.formState.isDirty, id, updateNodeForm, values]);
+}

@@ -1,4 +1,6 @@
 import { variableEnabledFieldMap } from '@/constants/chat';
+import { TFunction } from 'i18next';
+import { camelCase } from 'lodash';
 import omit from 'lodash/omit';
 
 // chat model setting and generate operator
@@ -26,3 +28,52 @@ export const removeUselessFieldsFromValues = (values: any, prefix?: string) => {
 
   return nextValues;
 };
+
+export function buildOptions(
+  data: Record<string, any>,
+  t?: TFunction<['translation', ...string[]], undefined>,
+  prefix?: string,
+  camel: boolean = false,
+) {
+  if (t) {
+    return Object.values(data).map((val) => ({
+      label: t(
+        `${prefix ? prefix + '.' : ''}${typeof val === 'string' ? (camel ? camelCase(val) : val.toLowerCase()) : val}`,
+      ),
+      value: val,
+    }));
+  }
+  return Object.values(data).map((val) => ({ label: val, value: val }));
+}
+
+export function setLLMSettingEnabledValues(
+  initialLlmSetting?: Record<string, any>,
+) {
+  const values = Object.keys(variableEnabledFieldMap).reduce<
+    Record<string, boolean>
+  >((pre, field) => {
+    pre[field] =
+      initialLlmSetting === undefined
+        ? false
+        : !!initialLlmSetting[
+            variableEnabledFieldMap[
+              field as keyof typeof variableEnabledFieldMap
+            ]
+          ];
+    return pre;
+  }, {});
+  return values;
+}
+
+/**
+ * Add prefix to form field name
+ * @param prefix - The prefix to add (e.g., 'chat.', 'settings.')
+ * @param name - The field name
+ * @returns The prefixed field name
+ * @example
+ * prefixName('chat.', 'icon') // returns 'chat.icon'
+ * prefixName('', 'name') // returns 'name'
+ */
+export function prefixName(prefix: string, name: string): string {
+  return `${prefix}${name}`;
+}

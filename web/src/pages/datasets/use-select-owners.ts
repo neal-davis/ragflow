@@ -1,17 +1,14 @@
 import { FilterCollection } from '@/components/list-filter-bar/interface';
-import { useFetchKnowledgeList } from '@/hooks/knowledge-hooks';
-import { groupListByType } from '@/utils/dataset-util';
-import { useMemo } from 'react';
+import { useFetchKnowledgeList } from '@/hooks/use-knowledge-request';
+import { buildOwnersFilter } from '@/utils/list-filter-util';
+import { useTranslation } from 'react-i18next';
 
 export function useSelectOwners() {
   const { list } = useFetchKnowledgeList();
-
-  const owners = useMemo(() => {
-    return groupListByType(list, 'tenant_id', 'nickname');
-  }, [list]);
+  const { t } = useTranslation();
 
   const filters: FilterCollection[] = [
-    { field: 'owner', list: owners, label: 'Owner' },
+    buildOwnersFilter(list, undefined, t('common.owner')),
   ];
 
   return filters;

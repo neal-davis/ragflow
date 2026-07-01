@@ -13,37 +13,41 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
-from functools import partial
-import pandas as pd
-from agent.component.base import ComponentBase, ComponentParamBase
+from agent.component.fillup import UserFillUpParam, UserFillUp
 
 
-class BeginParam(ComponentParamBase):
+class BeginParam(UserFillUpParam):
 
     """
     Define the Begin component parameters.
     """
     def __init__(self):
         super().__init__()
+        self.mode = "conversational"
         self.prologue = "Hi! I'm your smart assistant. What can I do for you?"
-        self.query = []
 
     def check(self):
-        return True
+        self.check_valid_value(self.mode, "The 'mode' should be either `conversational` or `task`", ["conversational", "task","Webhook"])
+
+    def get_input_form(self) -> dict[str, dict]:
+        return getattr(self, "inputs")
 
 
-class Begin(ComponentBase):
+class Begin(UserFillUp):
     component_name = "Begin"
 
-    def _run(self, history, **kwargs):
-        if kwargs.get("stream"):
-            return partial(self.stream_output)
-        return pd.DataFrame([{"content": self._param.prologue}])
+    def _invoke(self, **kwargs):
+        if self.check_if_canceled("Begin processing"):
+            return
 
-    def stream_output(self):
-        res = {"content": self._param.prologue}
-        yield res
-        self.set_output(self.be_output(res))
+        layout_recognize = self._param.layout_recognize or None
+        merged_inputs = self._merge_runtime_inputs(kwargs.get("inputs", {}))
+        for k, v in merged_inputs.items():
+            if self.check_if_canceled("Begin processing"):
+                return
+            v = self._resolve_input_value(v, layout_recognize)
+            self.set_output(k, v)
+            self.set_input_value(k, v)
 
-
-
+    def thoughts(self) -> str:
+        return ""
